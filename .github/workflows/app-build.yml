@@ -1,12 +1,12 @@
 name: Build App Image
 
-# Builds the full app image (base + handler code) and pushes to Docker Hub.
-# Trigger manually when ready to publish a new version.
+# Builds the complete optimized image and pushes to Docker Hub.
 
 on:
   push:
     paths:
       - 'Dockerfile'
+      - 'download_models.py'
       - 'handler.py'
       - 'comfyui_character.py'
       - '.github/workflows/app-build.yml'
@@ -17,8 +17,12 @@ jobs:
     steps:
       - name: Clean up Docker
         run: |
+          docker stop $(docker ps -aq) 2>/dev/null || true
+          docker rm -f $(docker ps -aq) 2>/dev/null || true
+          docker volume rm -f $(docker volume ls -q) 2>/dev/null || true
           docker system prune -af --volumes
           docker builder prune -af
+          df -h /
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,12 +36,16 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push app image
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
           push: true
+          build-args: |
+            HF_TOKEN=${{ secrets.HF_TOKEN }}
           tags: |
             runpod/comfyui-faceswap-sdxl:latest
           platforms: linux/amd64
+          cache-from: type=registry,ref=runpod/comfyui-faceswap-sdxl:buildcache
+          cache-to: type=registry,ref=runpod/comfyui-faceswap-sdxl:buildcache,mode=max
