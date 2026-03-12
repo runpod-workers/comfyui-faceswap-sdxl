@@ -32,13 +32,16 @@ jobs:
           du -sh /root/.cache/huggingface 2>/dev/null || true
           du -sh /tmp/hf_cache 2>/dev/null || true
 
-      - name: Clean everything
+      - name: Stop all containers and nuke everything
         run: |
-          docker system prune -af
+          docker stop $(docker ps -aq) 2>/dev/null || true
+          docker rm -f $(docker ps -aq) 2>/dev/null || true
+          docker volume rm -f $(docker volume ls -q) 2>/dev/null || true
+          docker system prune -af --volumes
           docker builder prune -af
-          rm -rf /opt/actions-runner/_work/_tool/* 2>/dev/null || true
+          rm -rf /root/.cache /root/serverless-workers /root/containers /root/river 2>/dev/null || true
+          rm -rf /var/log/journal/* 2>/dev/null || true
           rm -rf /tmp/* 2>/dev/null || true
-          rm -rf /root/.cache 2>/dev/null || true
 
       - name: Disk usage after
         run: df -h /
