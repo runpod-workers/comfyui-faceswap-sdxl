@@ -49,12 +49,12 @@ RUN pip uninstall -y onnxruntime onnxruntime-gpu 2>/dev/null; \
     pip install insightface==0.7.3 onnxruntime-gpu runpod nest_asyncio huggingface_hub \
     && pip cache purge && rm -rf /root/.cache/pip
 
-# Validate critical deps at build time
+# Validate critical deps at build time (skip llama_cpp — needs libcuda.so.1, unavailable during build)
 RUN python -c "\
 import insightface; assert insightface.__version__ == '0.7.3', f'insightface={insightface.__version__}'; \
 import onnxruntime; provs = onnxruntime.get_available_providers(); \
-from llama_cpp import Llama; \
-print(f'insightface OK, onnxruntime providers: {provs}, llama_cpp OK')"
+import importlib.util; assert importlib.util.find_spec('llama_cpp') is not None, 'llama_cpp not found'; \
+print(f'insightface OK, onnxruntime providers: {provs}, llama_cpp OK (spec found)')"
 
 # ---------------------------------------------------------------------------
 # Bake all models into the image (download + cleanup in ONE layer)
