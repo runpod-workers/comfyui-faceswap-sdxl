@@ -12,12 +12,33 @@ jobs:
       - name: Disk usage before
         run: df -h /
 
+      - name: Top 20 largest dirs
+        run: du -h --max-depth=3 / 2>/dev/null | sort -rh | head -40
+
+      - name: Docker disk usage
+        run: docker system df -v
+
+      - name: Check common caches
+        run: |
+          echo "=== /root ==="
+          du -sh /root/* 2>/dev/null || true
+          echo "=== /tmp ==="
+          du -sh /tmp/* 2>/dev/null || true
+          echo "=== /var/lib/docker ==="
+          du -sh /var/lib/docker/* 2>/dev/null || true
+          echo "=== /opt/actions-runner/_work ==="
+          du -sh /opt/actions-runner/_work/* 2>/dev/null || true
+          echo "=== HF caches ==="
+          du -sh /root/.cache/huggingface 2>/dev/null || true
+          du -sh /tmp/hf_cache 2>/dev/null || true
+
       - name: Clean everything
         run: |
           docker system prune -af
           docker builder prune -af
           rm -rf /opt/actions-runner/_work/_tool/* 2>/dev/null || true
           rm -rf /tmp/* 2>/dev/null || true
+          rm -rf /root/.cache 2>/dev/null || true
 
       - name: Disk usage after
         run: df -h /
