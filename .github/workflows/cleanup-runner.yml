@@ -12,19 +12,12 @@ jobs:
       - name: Disk usage before
         run: df -h /
 
-      - name: Nuke old runner work dirs
-        run: |
-          cd /home/runner/actions-runner/_work
-          for d in */; do
-            [ "$d" = "comfyui-faceswap-sdxl/" ] && continue
-            rm -rf "$d"
-          done
-          rm -rf /tmp/* 2>/dev/null || true
-
-      - name: Clean Docker
+      - name: Clean everything
         run: |
           docker system prune -af
           docker builder prune -af
+          rm -rf /opt/actions-runner/_work/_tool/* 2>/dev/null || true
+          rm -rf /tmp/* 2>/dev/null || true
 
       - name: Disk usage after
         run: df -h /
