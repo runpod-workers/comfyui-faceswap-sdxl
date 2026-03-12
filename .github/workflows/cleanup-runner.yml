@@ -1,0 +1,19 @@
+name: Cleanup DO Runner
+
+on:
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: DO
+    steps:
+      - name: Disk usage before
+        run: df -h /
+
+      - name: Clean Docker
+        run: |
+          docker system prune -af
+          docker builder prune -af
+
+      - name: Disk usage after
+        run: df -h /
