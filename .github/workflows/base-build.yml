@@ -7,6 +7,7 @@ on:
   push:
     paths:
       - 'base/**'
+      - 'download_models.py'
       - '.github/workflows/base-build.yml'
     branches: [main]
   workflow_dispatch:
@@ -33,6 +34,8 @@ jobs:
           context: .
           file: base/Dockerfile
           push: true
+          build-args: |
+            HF_TOKEN=${{ secrets.HF_TOKEN }}
           tags: |
             runpod/comfyui-faceswap-base:latest
           platforms: linux/amd64
