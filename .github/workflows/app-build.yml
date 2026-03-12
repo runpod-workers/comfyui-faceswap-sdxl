@@ -4,7 +4,12 @@ name: Build App Image
 # Trigger manually when ready to publish a new version.
 
 on:
-  workflow_dispatch:
+  push:
+    paths:
+      - 'Dockerfile'
+      - 'handler.py'
+      - 'comfyui_character.py'
+      - '.github/workflows/app-build.yml'
 
 jobs:
   build-app:
