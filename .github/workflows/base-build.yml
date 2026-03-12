@@ -9,8 +9,6 @@ on:
       - 'base/**'
       - 'download_models.py'
       - '.github/workflows/base-build.yml'
-    branches: [main]
-  workflow_dispatch:
 
 jobs:
   build-base:
