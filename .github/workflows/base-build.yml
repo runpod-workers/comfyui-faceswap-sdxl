@@ -1,0 +1,40 @@
+name: Build Base Image
+
+# Builds the heavy base image (ComfyUI + deps + llama-cpp-python CUDA compile).
+# Run manually or when base/ changes. The main app image uses this as FROM.
+
+on:
+  push:
+    paths:
+      - 'base/**'
+      - '.github/workflows/base-build.yml'
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-base:
+    runs-on: DO
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push base image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: base/Dockerfile
+          push: true
+          tags: |
+            runpod/comfyui-faceswap-base:latest
+          platforms: linux/amd64
+          cache-from: type=registry,ref=runpod/comfyui-faceswap-base:buildcache
+          cache-to: type=registry,ref=runpod/comfyui-faceswap-base:buildcache,mode=max
