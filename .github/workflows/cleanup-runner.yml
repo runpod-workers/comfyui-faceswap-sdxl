@@ -1,7 +1,9 @@
 name: Cleanup DO Runner
 
 on:
-  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/cleanup-runner.yml'
 
 jobs:
   cleanup:
@@ -9,6 +11,15 @@ jobs:
     steps:
       - name: Disk usage before
         run: df -h /
+
+      - name: Nuke old runner work dirs
+        run: |
+          cd /home/runner/actions-runner/_work
+          for d in */; do
+            [ "$d" = "comfyui-faceswap-sdxl/" ] && continue
+            rm -rf "$d"
+          done
+          rm -rf /tmp/* 2>/dev/null || true
 
       - name: Clean Docker
         run: |
