@@ -14,10 +14,9 @@ RUN CUDACXX=/usr/local/cuda/bin/nvcc CMAKE_ARGS="-DGGML_CUDA=on" \
 # ---------------------------------------------------------------------------
 FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
 
-# Copy compiled llama-cpp-python from builder + install its pure-Python deps
+# Copy compiled llama-cpp-python from builder
 COPY --from=builder /usr/local/lib/python3.11/dist-packages/llama_cpp /usr/local/lib/python3.11/dist-packages/llama_cpp
 COPY --from=builder /usr/local/lib/python3.11/dist-packages/llama_cpp_python* /usr/local/lib/python3.11/dist-packages/
-RUN pip install diskcache --no-cache-dir
 
 # System deps for OpenCV / image processing (SSH already in base image)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -72,6 +71,9 @@ RUN HF_TOKEN=${HF_TOKEN} python /tmp/download_models.py \
 
 # Redirect HuggingFace cache to network volume for any runtime downloads
 ENV HF_HOME=/runpod-volume/hf_cache
+
+# Runtime dep for llama-cpp-python (not copied from builder stage)
+RUN pip install diskcache --no-cache-dir
 
 # Copy application code
 COPY handler.py /handler.py
