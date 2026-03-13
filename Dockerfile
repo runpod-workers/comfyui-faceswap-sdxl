@@ -14,9 +14,10 @@ RUN CUDACXX=/usr/local/cuda/bin/nvcc CMAKE_ARGS="-DGGML_CUDA=on" \
 # ---------------------------------------------------------------------------
 FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
 
-# Copy compiled llama-cpp-python from builder
+# Copy compiled llama-cpp-python from builder + install its pure-Python deps
 COPY --from=builder /usr/local/lib/python3.11/dist-packages/llama_cpp /usr/local/lib/python3.11/dist-packages/llama_cpp
 COPY --from=builder /usr/local/lib/python3.11/dist-packages/llama_cpp_python* /usr/local/lib/python3.11/dist-packages/
+RUN pip install diskcache --no-cache-dir
 
 # System deps for OpenCV / image processing (SSH already in base image)
 RUN apt-get update && apt-get install -y --no-install-recommends \

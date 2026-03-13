@@ -46,6 +46,7 @@ jobs:
             HF_TOKEN=${{ secrets.HF_TOKEN }}
           tags: |
             runpod/comfyui-faceswap-sdxl:latest
+            runpod/comfyui-faceswap-sdxl:v2
           platforms: linux/amd64
           cache-from: type=registry,ref=runpod/comfyui-faceswap-sdxl:buildcache
           cache-to: type=registry,ref=runpod/comfyui-faceswap-sdxl:buildcache,mode=max
