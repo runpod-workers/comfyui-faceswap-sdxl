@@ -7,14 +7,19 @@ on:
   push:
     paths:
       - 'base/**'
+      - 'download_models.py'
       - '.github/workflows/base-build.yml'
-    branches: [main]
-  workflow_dispatch:
 
 jobs:
   build-base:
     runs-on: DO
     steps:
+      - name: Clean up Docker
+        run: |
+          docker system prune -af
+          docker builder prune -af
+          df -h /
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -33,8 +38,11 @@ jobs:
           context: .
           file: base/Dockerfile
           push: true
+          build-args: |
+            HF_TOKEN=${{ secrets.HF_TOKEN }}
           tags: |
             runpod/comfyui-faceswap-base:latest
+            runpod/comfyui-faceswap-base:v2
           platforms: linux/amd64
           cache-from: type=registry,ref=runpod/comfyui-faceswap-base:buildcache
           cache-to: type=registry,ref=runpod/comfyui-faceswap-base:buildcache,mode=max

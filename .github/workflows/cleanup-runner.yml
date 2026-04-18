@@ -1,0 +1,47 @@
+name: Cleanup DO Runner
+
+on:
+  push:
+    paths:
+      - '.github/workflows/cleanup-runner.yml'
+
+jobs:
+  cleanup:
+    runs-on: DO
+    steps:
+      - name: Disk usage before
+        run: df -h /
+
+      - name: Top 20 largest dirs
+        run: du -h --max-depth=3 / 2>/dev/null | sort -rh | head -40
+
+      - name: Docker disk usage
+        run: docker system df -v
+
+      - name: Check common caches
+        run: |
+          echo "=== /root ==="
+          du -sh /root/* 2>/dev/null || true
+          echo "=== /tmp ==="
+          du -sh /tmp/* 2>/dev/null || true
+          echo "=== /var/lib/docker ==="
+          du -sh /var/lib/docker/* 2>/dev/null || true
+          echo "=== /opt/actions-runner/_work ==="
+          du -sh /opt/actions-runner/_work/* 2>/dev/null || true
+          echo "=== HF caches ==="
+          du -sh /root/.cache/huggingface 2>/dev/null || true
+          du -sh /tmp/hf_cache 2>/dev/null || true
+
+      - name: Stop all containers and nuke everything
+        run: |
+          docker stop $(docker ps -aq) 2>/dev/null || true
+          docker rm -f $(docker ps -aq) 2>/dev/null || true
+          docker volume rm -f $(docker volume ls -q) 2>/dev/null || true
+          docker system prune -af --volumes
+          docker builder prune -af
+          rm -rf /root/.cache /root/serverless-workers /root/containers /root/river 2>/dev/null || true
+          rm -rf /var/log/journal/* 2>/dev/null || true
+          rm -rf /tmp/* 2>/dev/null || true
+
+      - name: Disk usage after
+        run: df -h /

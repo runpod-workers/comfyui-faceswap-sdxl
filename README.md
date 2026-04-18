@@ -1,14 +1,33 @@
-# ComfyUI FaceSwap — RunPod Serverless
+# ComfyUI FaceSwap SDXL — RunPod Serverless
 
 Character generation with optional face swap, deployed as a RunPod serverless endpoint.
 
-## Endpoint
+## Docker Image
 
-- **ID:** `bblp777ptfep17`
-- **API:** `https://api.runpod.ai/v2/bblp777ptfep17`
-- **Build:** Automatic on push to `main`
+```
+runpod/comfyui-faceswap-sdxl:latest
+```
 
-## Request Format
+All models are baked into the image for fast cold starts — no network volume required for inference.
+
+## Deploy on RunPod
+
+1. Create a new **Serverless Endpoint** on [runpod.io](https://www.runpod.io/)
+2. Set the Docker image to `runpod/comfyui-faceswap-sdxl:latest`
+3. Select a GPU with **at least 32 GB VRAM** (e.g. A100 40GB, A6000)
+4. Optionally attach a network volume mounted at `/runpod-volume` if you want to persist generated images
+
+## API Usage
+
+### Request
+
+```
+POST https://api.runpod.ai/v2/{YOUR_ENDPOINT_ID}/runsync
+Authorization: Bearer {YOUR_RUNPOD_API_KEY}
+Content-Type: application/json
+```
+
+Use `/runsync` for synchronous requests (waits for the result). For async, use `/run` and poll `/status/{JOB_ID}`.
 
 ```json
 {
@@ -21,7 +40,7 @@ Character generation with optional face swap, deployed as a RunPod serverless en
     "cfg": 2.0,
     "seed": 42,
     "image_url": "https://example.com/face.png",
-    "face_description": "",
+    "face_description": "the woman on the left",
     "output": {
       "include_base64": true,
       "save_to_volume": false,
@@ -30,6 +49,8 @@ Character generation with optional face swap, deployed as a RunPod serverless en
   }
 }
 ```
+
+### Parameters
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
@@ -50,9 +71,39 @@ Character generation with optional face swap, deployed as a RunPod serverless en
 
 - **Text only:** Omit `image_url` — generates character from prompt using CyberRealistic XL
 - **Face swap:** Provide `image_url` — generates character, then applies face from reference using IPAdapter + InstantID
-- **Face picking:** When `face_description` is provided alongside `image_url`, uses Qwen2.5-VL-3B vision model to pick the matching face from multi-face scenes instead of defaulting to the largest face
+- **Face picking:** Provide `face_description` alongside `image_url` — uses a vision model to pick the matching face from multi-face scenes instead of defaulting to the largest face
+
+### Response
+
+```json
+{
+  "delayTime": 102,
+  "executionTime": 4019,
+  "id": "sync-12e21de8-...",
+  "output": {
+    "duration_seconds": 3.42,
+    "image_base64": "<base64-encoded PNG>",
+    "image_path": "/runpod-volume/outputs/42_1773510473.png",
+    "seed": 42,
+    "status": "success"
+  },
+  "status": "COMPLETED"
+}
+```
+
+### Resolution Presets
+
+| Name | Dimensions |
+|------|-----------|
+| `portrait` | 832 x 1216 |
+| `landscape` | 1216 x 832 |
+| `square` | 1024 x 1024 |
+| `small-portrait` | 640 x 960 |
+| `small-landscape` | 960 x 640 |
 
 ## Models
+
+All models are baked into the Docker image at build time for fast cold starts.
 
 | Model | Purpose | Size |
 |-------|---------|------|
@@ -67,105 +118,58 @@ Character generation with optional face swap, deployed as a RunPod serverless en
 | YOLOv8m Face | Face bounding box detection | ~0.05 GB |
 | Qwen2.5-VL-3B Q4_K_M (GGUF) | Vision-based face picking | ~2.3 GB VRAM |
 
-All models are baked into the Docker image at build time for fast cold starts. Total VRAM at startup: ~21.7 GB. Peak during face swap: ~29.5 GB on a 32 GB GPU (~3 GB headroom).
+## GPU Requirements
+
+- **Startup:** ~21.7 GB VRAM
+- **Peak (face swap):** ~29.5 GB VRAM
+- **Minimum GPU VRAM:** 32 GB
 
 ## Benchmark
 
-### Prerequisites
+A benchmark script is included to test endpoint performance.
 
 ```bash
 pip install requests
 export RUNPOD_API_KEY=your_key
 ```
 
-### Quick Start
+The script uses the endpoint ID defined in `benchmark.py` — update the `ENDPOINT_ID` variable to match your endpoint before running.
 
 ```bash
-# 20 requests: text + face swap, portrait + square, seed for reproducibility
+# Text + face swap, multiple resolutions
 python benchmark.py \
   --count 20 \
   --modes text,face \
   --resolutions portrait square \
-  --face-url https://files.catbox.moe/az73pf.png \
+  --face-url https://example.com/face.png \
   --seed 42
-```
 
-### Benchmark Configs
-
-#### Full benchmark (text + face swap, all resolutions)
-```bash
-python benchmark.py \
-  --count 20 \
-  --modes text,face \
-  --resolutions portrait square landscape \
-  --face-url https://files.catbox.moe/az73pf.png \
-  --seed 42 \
-  --concurrency 3
-```
-
-#### Text-only performance test
-```bash
+# Text-only
 python benchmark.py \
   --count 10 \
   --modes text \
-  --resolutions portrait square \
-  --seed 100
-```
+  --resolutions portrait
 
-#### Face swap quality validation
-```bash
+# Face swap only
 python benchmark.py \
   --count 10 \
   --modes face \
   --resolutions portrait \
-  --face-url https://files.catbox.moe/az73pf.png \
-  --seed 200
+  --face-url https://example.com/face.png
 ```
 
-#### High-res stress test
-```bash
-python benchmark.py \
-  --count 10 \
-  --modes text,face \
-  --resolutions portrait landscape square \
-  --face-url https://files.catbox.moe/az73pf.png \
-  --concurrency 5 \
-  --seed 300
-```
-
-### CLI Options
+Images are saved to `benchmark_results/<timestamp>/` alongside a `report.json` with full timing data. The first request runs sequentially to capture cold start time; remaining requests run concurrently.
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--count` | `10` | Total requests |
 | `--modes` | `text` | Comma-separated: `text`, `face` |
-| `--resolutions` | `portrait` | Space-separated presets (see below) |
+| `--resolutions` | `portrait` | Space-separated: `portrait`, `landscape`, `square`, `small-portrait`, `small-landscape` |
 | `--face-url` | — | Face image URL (required for `face` mode) |
 | `--face-description` | — | Which face to pick from reference |
 | `--steps` | `35` | Sampling steps |
 | `--cfg` | `2.0` | CFG scale |
 | `--seed` | random | Base seed (incremented per request) |
 | `--concurrency` | `3` | Max parallel requests |
-| `--output-dir` | `benchmark_results` | Where to save images + report |
+| `--output-dir` | `benchmark_results` | Output directory |
 | `--timeout` | `600` | Per-job timeout (seconds) |
-
-### Resolution Presets
-
-| Name | Dimensions |
-|------|-----------|
-| `portrait` | 832 x 1216 |
-| `landscape` | 1216 x 832 |
-| `square` | 1024 x 1024 |
-| `small-portrait` | 640 x 960 |
-| `small-landscape` | 960 x 640 |
-
-### Output
-
-Images are saved to `benchmark_results/<timestamp>/` with filenames like:
-```
-003_faceswap_1024x1024_steps35_cfg2.0_seed45.png
-```
-
-A `report.json` with full timing data is saved alongside the images.
-
-The first request runs sequentially to capture cold start time. Remaining requests run concurrently. The summary shows per-resolution/mode breakdowns.
