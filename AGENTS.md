@@ -13,4 +13,4 @@ The language model GGUF alone (from mradermacher) does NOT support image input �
 
 ## VRAM budget (32 GB)
 
-SDXL pipeline: ~19.2 GB. Qwen2.5-VL-3B Q4_K_M (loaded at startup): +2.3 GB. Face swap worst case with VLM loaded: ~29.5 GB. Headroom: ~3 GB. Q3_K_M and smaller quants produce empty/broken vision responses — Q4_K_M is the minimum viable quant. The previous UI-TARS 7B (~6.7 GB) caused OOM during face swap — that's why we switched to Qwen2.5-VL-3B.
+SDXL pipeline: ~19.2 GB. Face swap worst case: ~29.5 GB. The Qwen2.5-VL-3B Q4_K_M VLM (~2.3 GB) is loaded on-demand in `_pick_face_with_vision` and unloaded immediately after — keeping it resident caused GGML_ASSERT aborts in `clip_image_batch_encode` because the vision encoder's graph allocator had no room alongside the resident SDXL models. Q3_K_M and smaller quants produce empty/broken vision responses — Q4_K_M is the minimum viable quant. The previous UI-TARS 7B (~6.7 GB) caused OOM during face swap — that's why we switched to Qwen2.5-VL-3B.
