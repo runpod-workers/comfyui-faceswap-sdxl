@@ -674,31 +674,24 @@ class ComfyUICharacter:
             model_name="bbox/face_yolov8m.pt"
         )[0]
 
-        # Qwen2.5-VL-3B for LLM-based face picking (~2.3 GB VRAM).
-        # Loaded at startup and kept in memory — worst case (VLM + face swap) peaks
-        # at ~29.5 GB on a 32 GB GPU, leaving ~3 GB headroom.
-        vlm_model_path = os.path.join(self.BAKED_MODELS_PATH, "llm", "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf")
-        vlm_mmproj_path = os.path.join(self.BAKED_MODELS_PATH, "llm", "Qwen2.5-VL-3B-Instruct-mmproj-f16.gguf")
-        if os.path.exists(vlm_model_path) and os.path.exists(vlm_mmproj_path):
-            from llama_cpp import Llama
-            from llama_cpp.llama_chat_format import Qwen25VLChatHandler
-
-            self.logger.info("Loading Qwen2.5-VL-3B for face picking...")
-            self._vlm_chat_handler = Qwen25VLChatHandler(
-                clip_model_path=vlm_mmproj_path,
-                verbose=False,
-            )
-            self.llm = Llama(
-                model_path=vlm_model_path,
-                chat_handler=self._vlm_chat_handler,
-                n_gpu_layers=-1,
-                n_ctx=4096,
-                verbose=False,
-            )
-            self.logger.info("Qwen2.5-VL-3B loaded")
+        # Qwen2.5-VL-3B is loaded on-demand in _pick_face_with_vision. Keeping
+        # it resident alongside the SDXL models leaves insufficient VRAM for
+        # the vision encoder's graph allocator (clip_image_batch_encode), which
+        # triggers a GGML_ASSERT abort during inference on 32 GB GPUs.
+        self._vlm_model_path = os.path.join(
+            self.BAKED_MODELS_PATH, "llm", "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf"
+        )
+        self._vlm_mmproj_path = os.path.join(
+            self.BAKED_MODELS_PATH, "llm", "Qwen2.5-VL-3B-Instruct-mmproj-f16.gguf"
+        )
+        self._vlm_available = os.path.exists(self._vlm_model_path) and os.path.exists(
+            self._vlm_mmproj_path
+        )
+        self.llm = None
+        self._vlm_chat_handler = None
+        if self._vlm_available:
+            self.logger.info("Qwen2.5-VL-3B available (will load on-demand)")
         else:
-            self.llm = None
-            self._vlm_chat_handler = None
             self.logger.info("Qwen2.5-VL-3B not found, face picking will use largest-face fallback")
 
         self.logger.info("All models loaded to GPU")
@@ -799,7 +792,7 @@ class ComfyUICharacter:
             self.logger.warning("No faces detected")
             return segs
 
-        if len(seg_list) == 1 or not face_description or self.llm is None:
+        if len(seg_list) == 1 or not face_description or not self._vlm_available:
             return self._pick_largest_face(segs)
 
         try:
@@ -849,18 +842,21 @@ class ComfyUICharacter:
             f"Reply with ONLY the number of the matching face."
         )
 
-        response = self.llm.create_chat_completion(
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
-                    {"type": "text", "text": prompt},
-                ],
-            }],
-            max_tokens=32,
-        )
-
-        answer = response["choices"][0]["message"]["content"].strip()
+        try:
+            self._load_vlm()
+            response = self.llm.create_chat_completion(
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
+                        {"type": "text", "text": prompt},
+                    ],
+                }],
+                max_tokens=32,
+            )
+            answer = response["choices"][0]["message"]["content"].strip()
+        finally:
+            self._unload_vlm()
 
         # Parse face number from response
         match = re.search(r"\d+", answer)
@@ -877,6 +873,43 @@ class ComfyUICharacter:
             f"Vision model picked face {face_idx + 1}/{len(seg_list)} for '{face_description}'"
         )
         return (seg_header, [seg_list[face_idx]])
+
+    def _load_vlm(self):
+        """Load Qwen2.5-VL-3B into GPU memory."""
+        from llama_cpp import Llama
+        from llama_cpp.llama_chat_format import Qwen25VLChatHandler
+
+        self.logger.info("Loading Qwen2.5-VL-3B...")
+        self._vlm_chat_handler = Qwen25VLChatHandler(
+            clip_model_path=self._vlm_mmproj_path,
+            verbose=False,
+        )
+        self.llm = Llama(
+            model_path=self._vlm_model_path,
+            chat_handler=self._vlm_chat_handler,
+            n_gpu_layers=-1,
+            n_ctx=4096,
+            verbose=False,
+        )
+
+    def _unload_vlm(self):
+        """Release the VLM's VRAM before the face-swap pipeline resumes."""
+        import gc
+
+        import torch
+
+        if self.llm is not None:
+            close = getattr(self.llm, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception as e:
+                    self.logger.warning(f"Error closing llama model: {e}")
+            self.llm = None
+        self._vlm_chat_handler = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     # -------------------------------------------------------------------------
     # Private: Face swap pipeline
