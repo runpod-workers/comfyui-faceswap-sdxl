@@ -3,14 +3,14 @@ This document exists for non-obvious, error-prone shortcomings in the codebase, 
 
 ---
 
-## llama-cpp-python has no prebuilt wheels for CUDA 12.8
+## Qwen2.5-VL face picker uses HF transformers, not llama-cpp-python
 
-No `--extra-index-url` wheel exists for cu128 (official wheels only cover cu121–cu125). Must build from source with `CUDACXX=/usr/local/cuda/bin/nvcc CMAKE_ARGS="-DGGML_CUDA=on"`. Without these env vars, `pip install llama-cpp-python` silently succeeds but falls back to CPU-only — no error, just all layers placed on CPU. See llama-cpp-python issues #2068 and #2079.
-
-## Qwen2.5-VL needs a separate mmproj file for vision
-
-The language model GGUF alone (from mradermacher) does NOT support image input — it silently falls back to text-only. You need the mmproj (vision encoder) from `Mungert/Qwen2.5-VL-3B-Instruct-GGUF` (`Qwen2.5-VL-3B-Instruct-mmproj-f16.gguf`, ~1.3 GB). Must use `Qwen25VLChatHandler` (not `Llava16ChatHandler`) — the Llava handler produces empty/garbage responses with Qwen2.5-VL models.
+The previous llama-cpp-python/GGUF path crashed in `libmtmd`'s `clip_image_batch_encode` on multi-face inputs (`GGML_ASSERT` buffer-bounds check at `ggml-backend.cpp:1668`). The crash was data-dependent and not fixable by tuning `n_ctx`/`n_batch` alone, so the picker was migrated to `Qwen2_5_VLForConditionalGeneration` from `transformers`. Don't reintroduce llama-cpp-python for VLM use.
 
 ## VRAM budget (32 GB)
 
-SDXL pipeline: ~19.2 GB. Qwen2.5-VL-3B Q4_K_M (loaded at startup): +2.3 GB. Face swap worst case with VLM loaded: ~29.5 GB. Headroom: ~3 GB. Q3_K_M and smaller quants produce empty/broken vision responses — Q4_K_M is the minimum viable quant. The previous UI-TARS 7B (~6.7 GB) caused OOM during face swap — that's why we switched to Qwen2.5-VL-3B.
+SDXL pipeline: ~19.2 GB. Qwen2.5-VL-3B in nf4 4-bit via bitsandbytes (HF transformers, loaded at startup): ~3 GB. Face swap worst case with VLM loaded: ~29.5–30 GB on a 32 GB GPU, leaving ~2–2.5 GB headroom — same envelope as the prior Q4_K_M GGUF. Don't switch to bf16/fp16 (~6 GB) without a bigger GPU; the worst case spills past 32 GB. The previous UI-TARS 7B (~6.7 GB) caused OOM during face swap — that's why we switched to Qwen2.5-VL-3B.
+
+## bitsandbytes 4-bit quirks
+
+Don't call `.to("cuda")` on a `BitsAndBytesConfig`-loaded model — bnb manages device placement during `from_pretrained` via `device_map`. Calling `.to(...)` raises `ValueError: .to is not supported for 4-bit models`. Use `device_map="cuda:0"` at load time and don't move the model afterward.

@@ -1,22 +1,11 @@
 # ComfyUI SDXL Face Swap — single optimized image
 # ---------------------------------------------------------------------------
-# Stage 1: compile llama-cpp-python with CUDA (needs nvcc from devel image)
-# ---------------------------------------------------------------------------
-FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04 AS builder
-
-RUN CUDACXX=/usr/local/cuda/bin/nvcc CMAKE_ARGS="-DGGML_CUDA=on" \
-    pip install llama-cpp-python --no-cache-dir \
-    && pip cache purge \
-    && rm -rf /root/.cache/pip /root/.cache/cmake /tmp/cmake* /tmp/pip*
-
-# ---------------------------------------------------------------------------
-# Stage 2: runtime image (same base, but fresh — no build artifacts in layers)
+# Single-stage build. Previously had a builder stage to compile
+# llama-cpp-python with CUDA; that path crashed in libmtmd's GGML buffer
+# scheduler on multi-face Qwen2.5-VL inputs and was replaced with HF
+# transformers (see comfyui_character._pick_face_with_vision).
 # ---------------------------------------------------------------------------
 FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
-
-# Copy compiled llama-cpp-python from builder
-COPY --from=builder /usr/local/lib/python3.11/dist-packages/llama_cpp /usr/local/lib/python3.11/dist-packages/llama_cpp
-COPY --from=builder /usr/local/lib/python3.11/dist-packages/llama_cpp_python* /usr/local/lib/python3.11/dist-packages/
 
 # System deps for OpenCV / image processing (SSH already in base image)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -48,13 +37,19 @@ RUN pip uninstall -y onnxruntime onnxruntime-gpu 2>/dev/null; \
     pip install insightface==0.7.3 onnxruntime-gpu runpod nest_asyncio huggingface_hub \
     && pip cache purge && rm -rf /root/.cache/pip
 
-# Validate critical deps at build time (llama_cpp needs libcuda.so.1 — runtime only)
+# transformers >= 4.49 is required for Qwen2.5-VL (Qwen2_5_VLForConditionalGeneration).
+# bitsandbytes lets us load Qwen in 4-bit nf4 to keep VLM VRAM ~3 GB (fits 32 GB pipeline).
+RUN pip install "transformers>=4.49.0" accelerate bitsandbytes \
+    && pip cache purge && rm -rf /root/.cache/pip
+
+# Validate critical deps at build time
 RUN python -c "\
 import insightface; assert insightface.__version__ == '0.7.3', f'insightface={insightface.__version__}'; \
 import onnxruntime; provs = onnxruntime.get_available_providers(); \
 print(f'insightface OK, onnxruntime providers: {provs}'); \
-import importlib.util; assert importlib.util.find_spec('llama_cpp'), 'llama_cpp not found'; \
-print('llama_cpp package found (GPU import validated at runtime)')"
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor, BitsAndBytesConfig; \
+import bitsandbytes; \
+print('transformers Qwen2.5-VL + bitsandbytes import OK')"
 
 # ---------------------------------------------------------------------------
 # Bake all models into the image (download + cleanup in ONE layer)
@@ -71,9 +66,6 @@ RUN HF_TOKEN=${HF_TOKEN} python /tmp/download_models.py \
 
 # Redirect HuggingFace cache to network volume for any runtime downloads
 ENV HF_HOME=/runpod-volume/hf_cache
-
-# Runtime dep for llama-cpp-python (not copied from builder stage)
-RUN pip install diskcache --no-cache-dir
 
 # Copy application code
 COPY handler.py /handler.py
