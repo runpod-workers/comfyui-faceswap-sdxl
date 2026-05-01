@@ -81,8 +81,15 @@ dl_url("https://huggingface.co/Bingsu/adetailer/resolve/main/face_yolov8m.pt",
        "models/ultralytics/bbox", "face_yolov8m.pt")
 
 # --- Qwen2.5-VL-3B (vision model for face picking) ---
-print("Downloading Qwen2.5-VL-3B (GGUF + mmproj)...")
-dl("mradermacher/Qwen2.5-VL-3B-Instruct-GGUF", "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf", "llm")
-dl("Mungert/Qwen2.5-VL-3B-Instruct-GGUF", "Qwen2.5-VL-3B-Instruct-mmproj-f16.gguf", "llm")
+print("Downloading Qwen2.5-VL-3B (HF transformers)...")
+from huggingface_hub import snapshot_download
+qwen_dir = os.path.join(MODELS_DIR, "llm", "Qwen2.5-VL-3B-Instruct")
+os.makedirs(qwen_dir, exist_ok=True)
+snapshot_download(
+    "Qwen/Qwen2.5-VL-3B-Instruct",
+    local_dir=qwen_dir,
+    allow_patterns=["*.json", "*.txt", "*.safetensors", "tokenizer.model", "*.py"],
+    token=hf_token or None,
+)
 
 print("All models downloaded.")

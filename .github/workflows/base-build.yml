@@ -42,7 +42,7 @@ jobs:
             HF_TOKEN=${{ secrets.HF_TOKEN }}
           tags: |
             runpod/comfyui-faceswap-base:latest
-            runpod/comfyui-faceswap-base:v2
+            runpod/comfyui-faceswap-base:v4
           platforms: linux/amd64
           cache-from: type=registry,ref=runpod/comfyui-faceswap-base:buildcache
           cache-to: type=registry,ref=runpod/comfyui-faceswap-base:buildcache,mode=max

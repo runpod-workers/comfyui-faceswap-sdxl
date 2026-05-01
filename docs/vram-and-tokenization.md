@@ -1,39 +1,24 @@
 # Qwen2.5-VL Image Tokenization
 
-## Measured Token Counts
+## Backend
 
-Measured by running Qwen2.5-VL-3B with an 832x1216 image (default SDXL portrait output). The vision encoder reported:
+The face picker uses `Qwen2_5_VLForConditionalGeneration` from `transformers` (bf16). The earlier llama-cpp-python/GGUF backend was removed because it crashed with `GGML_ASSERT` in `libmtmd`'s `clip_image_batch_encode` on multi-face inputs (data-dependent buffer-bounds violation in the GGML scheduler).
 
-```
-image_tokens->nx = 25
-image_tokens->ny = 37
-```
+## Image Token Budget
 
-**925 image tokens** for a single 832x1216 image (~33 pixels per token).
+Qwen2.5-VL packs ~33 pixels into one vision token. For an 832x1216 SDXL portrait the encoder produces a 25x37 grid (~925 image tokens). With ~80 tokens of system+user text on top, a single picker call needs ~1,005 tokens — well under the 32k native context.
 
-| Resolution | Token Grid | Total Tokens | Notes |
-|------------|-----------|--------------|-------|
-| 832x1216 | 25x37 | 925 | Measured |
-| 1024x1024 | ~31x31 | ~961 | Extrapolated |
-| 1216x832 | ~37x25 | ~925 | Extrapolated |
+| Resolution | Token Grid | Total Tokens |
+|------------|-----------|--------------|
+| 832x1216   | 25x37     | 925          |
+| 1024x1024  | ~31x31    | ~961         |
+| 1216x832   | ~37x25    | ~925         |
 
-## Total Prompt Size
+Transformers handles the buffer arithmetic internally, so there is no `n_ctx`/`n_batch` tuning to do here.
 
-With system prompt (~20 tokens), image (925), and text prompt (~60), the total is **~1,005 tokens** — only 25% of the 4,096 context window.
+## VRAM
 
-**`n_ctx=4096` is sufficient.** The `n_ctx_per_seq (4096) < n_ctx_train (128000)` warning from llama.cpp is safe to ignore.
-
-## KV Cache Cost Per Context Size
-
-The KV cache is where tokens consume VRAM. Calculated from model metadata (36 layers, n_embd_k/v_gqa = 256, f16):
-
-| n_ctx | KV Cache |
-|-------|----------|
-| 4,096 | 144 MB |
-| 8,192 | 288 MB |
-| 16,384 | 576 MB |
-
-Since the actual prompt is ~1,005 tokens, **n_ctx=4096 wastes ~3,091 token slots (108 MB)** of pre-allocated KV cache that will never be used. Lowering n_ctx to 2048 would save 72 MB but leaves little margin. 4096 is a reasonable default.
+Loaded in nf4 4-bit via `bitsandbytes` (`BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4")`): ~3 GB total. Loaded at startup. See `CLAUDE.md` for the full pipeline budget.
 
 ## Runpod SSH Limitation
 

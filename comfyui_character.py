@@ -674,24 +674,39 @@ class ComfyUICharacter:
             model_name="bbox/face_yolov8m.pt"
         )[0]
 
-        # Qwen2.5-VL-3B is loaded on-demand in _pick_face_with_vision. Keeping
-        # it resident alongside the SDXL models leaves insufficient VRAM for
-        # the vision encoder's graph allocator (clip_image_batch_encode), which
-        # triggers a GGML_ASSERT abort during inference on 32 GB GPUs.
-        self._vlm_model_path = os.path.join(
-            self.BAKED_MODELS_PATH, "llm", "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf"
-        )
-        self._vlm_mmproj_path = os.path.join(
-            self.BAKED_MODELS_PATH, "llm", "Qwen2.5-VL-3B-Instruct-mmproj-f16.gguf"
-        )
-        self._vlm_available = os.path.exists(self._vlm_model_path) and os.path.exists(
-            self._vlm_mmproj_path
-        )
-        self.llm = None
-        self._vlm_chat_handler = None
-        if self._vlm_available:
-            self.logger.info("Qwen2.5-VL-3B available (will load on-demand)")
+        # Qwen2.5-VL-3B (HF transformers) for LLM-based face picking.
+        # The earlier llama-cpp-python/GGUF path crashed with GGML_ASSERT in
+        # libmtmd's clip_image_batch_encode on multi-face inputs; transformers
+        # bypasses that allocator path. Loaded in nf4 4-bit via bitsandbytes
+        # to keep total VLM footprint ~3 GB — same envelope as the old Q4
+        # GGUF, so the pipeline still fits a 32 GB GPU.
+        vlm_dir = os.path.join(self.BAKED_MODELS_PATH, "llm", "Qwen2.5-VL-3B-Instruct")
+        if os.path.isdir(vlm_dir):
+            import torch
+            from transformers import (
+                AutoProcessor,
+                BitsAndBytesConfig,
+                Qwen2_5_VLForConditionalGeneration,
+            )
+
+            self.logger.info("Loading Qwen2.5-VL-3B (transformers, nf4 4-bit) for face picking...")
+            quant_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_use_double_quant=True,
+            )
+            self._vlm_processor = AutoProcessor.from_pretrained(vlm_dir)
+            self.llm = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                vlm_dir,
+                quantization_config=quant_config,
+                device_map="cuda:0",
+                attn_implementation="sdpa",
+            ).eval()
+            self.logger.info("Qwen2.5-VL-3B loaded")
         else:
+            self.llm = None
+            self._vlm_processor = None
             self.logger.info("Qwen2.5-VL-3B not found, face picking will use largest-face fallback")
 
         self.logger.info("All models loaded to GPU")
@@ -792,7 +807,7 @@ class ComfyUICharacter:
             self.logger.warning("No faces detected")
             return segs
 
-        if len(seg_list) == 1 or not face_description or not self._vlm_available:
+        if len(seg_list) == 1 or not face_description or self.llm is None:
             return self._pick_largest_face(segs)
 
         try:
@@ -808,11 +823,10 @@ class ComfyUICharacter:
         the VLM with the face description, and parses the response to get
         the face index.
         """
-        import base64
-        import io
         import re
 
         import numpy as np
+        import torch
         from PIL import Image, ImageDraw
 
         seg_header, seg_list = segs
@@ -831,32 +845,36 @@ class ComfyUICharacter:
             draw.rectangle([x1, y1, x1 + 20, y1 + 20], fill="red")
             draw.text((x1 + 5, y1 + 2), label, fill="white")
 
-        # Convert annotated image to base64
-        buffer = io.BytesIO()
-        img.save(buffer, format="PNG")
-        img_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
-
         prompt = (
             f"This image shows {len(seg_list)} faces, each marked with a red numbered box. "
             f"Which face best matches this description: \"{face_description}\"? "
             f"Reply with ONLY the number of the matching face."
         )
 
-        try:
-            self._load_vlm()
-            response = self.llm.create_chat_completion(
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
-                        {"type": "text", "text": prompt},
-                    ],
-                }],
-                max_tokens=32,
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "image", "image": img},
+                {"type": "text", "text": prompt},
+            ],
+        }]
+        text = self._vlm_processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        inputs = self._vlm_processor(
+            text=[text], images=[img], return_tensors="pt"
+        ).to(self.llm.device)
+
+        with torch.inference_mode():
+            output_ids = self.llm.generate(
+                **inputs, max_new_tokens=32, do_sample=False
             )
-            answer = response["choices"][0]["message"]["content"].strip()
-        finally:
-            self._unload_vlm()
+
+        # Trim the prompt prefix off the generated ids before decoding
+        new_tokens = output_ids[0][inputs.input_ids.shape[1]:]
+        answer = self._vlm_processor.decode(
+            new_tokens, skip_special_tokens=True
+        ).strip()
 
         # Parse face number from response
         match = re.search(r"\d+", answer)
@@ -873,43 +891,6 @@ class ComfyUICharacter:
             f"Vision model picked face {face_idx + 1}/{len(seg_list)} for '{face_description}'"
         )
         return (seg_header, [seg_list[face_idx]])
-
-    def _load_vlm(self):
-        """Load Qwen2.5-VL-3B into GPU memory."""
-        from llama_cpp import Llama
-        from llama_cpp.llama_chat_format import Qwen25VLChatHandler
-
-        self.logger.info("Loading Qwen2.5-VL-3B...")
-        self._vlm_chat_handler = Qwen25VLChatHandler(
-            clip_model_path=self._vlm_mmproj_path,
-            verbose=False,
-        )
-        self.llm = Llama(
-            model_path=self._vlm_model_path,
-            chat_handler=self._vlm_chat_handler,
-            n_gpu_layers=-1,
-            n_ctx=4096,
-            verbose=False,
-        )
-
-    def _unload_vlm(self):
-        """Release the VLM's VRAM before the face-swap pipeline resumes."""
-        import gc
-
-        import torch
-
-        if self.llm is not None:
-            close = getattr(self.llm, "close", None)
-            if callable(close):
-                try:
-                    close()
-                except Exception as e:
-                    self.logger.warning(f"Error closing llama model: {e}")
-            self.llm = None
-        self._vlm_chat_handler = None
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
 
     # -------------------------------------------------------------------------
     # Private: Face swap pipeline
