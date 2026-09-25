@@ -1,6 +1,6 @@
-# ComfyUI FaceSwap SDXL — RunPod Serverless
+# ComfyUI FaceSwap SDXL — Runpod Serverless
 
-Character generation with optional face swap, deployed as a RunPod serverless endpoint.
+Character generation with optional face swap, deployed as a Runpod serverless endpoint.
 
 ## Docker Image
 
@@ -10,7 +10,7 @@ runpod/comfyui-faceswap-sdxl:latest
 
 All models are baked into the image for fast cold starts — no network volume required for inference.
 
-## Deploy on RunPod
+## Deploy on Runpod
 
 1. Create a new **Serverless Endpoint** on [runpod.io](https://www.runpod.io/)
 2. Set the Docker image to `runpod/comfyui-faceswap-sdxl:latest`
